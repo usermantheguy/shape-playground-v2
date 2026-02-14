@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>2D Shape Playground</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Patrick Hand', cursive;
+            overflow: hidden;
+            touch-action: none;
+        }
+        
+        .tool-btn {
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        
+        .tool-btn:active {
+            transform: scale(0.95);
+        }
+
+        .tool-btn.active {
+            transform: translateY(-2px);
+            box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+            background-color: #eff6ff;
+            border-color: #3b82f6;
+            color: #2563eb;
+        }
+        
+        .dark .tool-btn.active {
+            background-color: #334155;
+            border-color: #94a3b8;
+            color: #e2e8f0;
+        }
+
+        .glass-panel {
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .info-popup {
+            animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes popIn {
+            from { transform: scale(0.9); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        .dark #theme-toggle { background-color: #3b82f6; }
+        .dark #theme-toggle div { transform: translateX(1rem); }
+        
+        /* Custom scrollbar for debug panel */
+        #debug-panel::-webkit-scrollbar { width: 4px; }
+        #debug-panel::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-700 transition-colors duration-300" id="app-body">
+
+    <canvas id="world" class="absolute top-0 left-0 w-full h-full block cursor-crosshair"></canvas>
+
+    <!-- Debug Panel -->
+    <div id="debug-panel" class="absolute hidden glass-panel bg-white/95 dark:bg-slate-800/95 p-3 rounded-lg shadow-xl border border-green-200 dark:border-green-900 z-30 info-popup text-sm w-48 pointer-events-auto">
+        <div class="flex justify-between items-center mb-2 border-b border-slate-200 pb-1">
+            <h3 class="font-bold text-green-600">Advanced Ops</h3>
+            <button onclick="closeDebug()" class="text-slate-400 hover:text-red-500">×</button>
+        </div>
+        <div class="space-y-3">
+            <div>
+                <label class="text-[10px] uppercase font-bold text-slate-400">Effects</label>
+                <div class="flex items-center gap-2 mt-1">
+                    <input type="checkbox" id="debug-rainbow" onchange="updateDebugProp('rainbow', this.checked)">
+                    <span class="text-xs dark:text-white">Rainbow Mode</span>
+                </div>
+            </div>
+            <div>
+                <label class="text-[10px] uppercase font-bold text-slate-400">Gravity Scale</label>
+                <input type="range" min="-1" max="2" step="0.1" value="1" class="w-full h-1" id="debug-grav" oninput="updateDebugProp('gravityScale', this.value)">
+            </div>
+            <div>
+                <label class="text-[10px] uppercase font-bold text-slate-400">Friction</label>
+                <input type="range" min="0" max="1" step="0.1" value="0.5" class="w-full h-1" id="debug-fric" oninput="updateDebugProp('friction', this.value)">
+            </div>
+            <button onclick="applyToAllDebug()" class="w-full py-1 bg-green-500 text-white text-[10px] rounded font-bold hover:bg-green-600">APPLY TO ALL</button>
+        </div>
+    </div>
+
+    <div id="info-card" class="absolute hidden glass-panel bg-white/95 dark:bg-slate-800/95 p-2 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-20 info-popup pointer-events-none text-xs max-w-[180px]">
+        <h3 class="font-bold mb-1 border-b border-slate-200 dark:border-slate-700 pb-1" id="info-name">Shape</h3>
+        <div class="space-y-0.5 text-slate-600 dark:text-slate-300">
+            <div class="flex justify-between"><span>State:</span> <span id="info-state" class="font-mono font-bold">Static</span></div>
+            <div class="flex justify-between"><span>Area:</span> <span id="info-area" class="font-mono">100</span></div>
+            <div class="flex justify-between"><span>X/Y:</span> <span id="info-pos" class="font-mono">0,0</span></div>
+        </div>
+    </div>
+
+    <div class="absolute inset-0 pointer-events-none flex flex-col justify-between p-2 z-10">
+        <div class="flex justify-between items-start pointer-events-auto">
+            <div class="glass-panel bg-white/90 dark:bg-slate-800/90 shadow-sm rounded-lg p-0.5 flex gap-1 border border-slate-200 dark:border-slate-700">
+                <button id="mode-static" class="px-2 py-1 rounded-md text-xs font-bold" onclick="setPhysicsMode('static')">Static</button>
+                <button id="mode-gravity" class="px-2 py-1 rounded-md text-xs font-bold" onclick="setPhysicsMode('gravity')">Gravity</button>
+            </div>
+
+            <div class="flex gap-2">
+                <button onclick="setTool('debug')" id="btn-debug-toggle" class="glass-panel bg-white/90 dark:bg-slate-800/90 shadow-sm p-1.5 rounded-full hover:bg-green-50 dark:hover:bg-green-900/30 text-green-600 transition-colors border border-green-200 dark:border-green-800">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg>
+                </button>
+                <button onclick="toggleSettings()" class="glass-panel bg-white/90 dark:bg-slate-800/90 shadow-sm p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 dark:text-white transition-colors border border-slate-200 dark:border-slate-700">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <div id="tool-config" class="pointer-events-auto absolute top-14 left-2 glass-panel bg-white/90 dark:bg-slate-800/90 p-2 rounded-lg shadow-md border border-slate-200 dark:border-slate-700 transition-all opacity-0 -translate-x-4 dark:text-white" style="display: none;">
+            <div class="flex flex-col gap-1.5 min-w-[120px]">
+                <span class="font-bold text-[11px]" id="config-title">Circle</span>
+                <div class="flex items-center justify-between text-[10px]">
+                    <span>Color</span>
+                    <input type="color" id="color-picker" class="w-6 h-6 border-none bg-transparent" value="#3b82f6" onchange="updateColor(this.value)">
+                </div>
+                <div id="size-control" class="flex flex-col gap-0.5">
+                    <input type="range" min="0.5" max="5" step="0.1" value="1" class="w-full h-1" oninput="updateRadius(this.value)">
+                </div>
+            </div>
+        </div>
+
+        <div class="pointer-events-auto self-center glass-panel bg-white/90 dark:bg-slate-800/90 p-1 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 flex gap-0.5 items-end mb-1">
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('pan')" id="btn-pan">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 9-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>
+                <span class="text-[8px] font-bold uppercase">Pan</span>
+            </button>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('grab')" id="btn-grab">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v11"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+                <span class="text-[8px] font-bold uppercase">Grab</span>
+            </button>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('morph')" id="btn-morph">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 12-8.5 8.5c-.83.83-2.17.83-3 0 0 0 0 0 0 0a2.12 2.12 0 0 1 0-3L12 9"/><path d="M17.64 15 22 10.64"/><path d="m15 19 3-3"/></svg>
+                <span class="text-[8px] font-bold uppercase">Morph</span>
+            </button>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('paint')" id="btn-paint">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 19 7-7 3 3-7 7-3-3z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="m2 2 5 2.5L13 13"/></svg>
+                <span class="text-[8px] font-bold uppercase">Paint</span>
+            </button>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('info')" id="btn-info">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>
+                <span class="text-[8px] font-bold uppercase">Info</span>
+            </button>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('eraser')" id="btn-eraser">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/></svg>
+                <span class="text-[8px] font-bold uppercase">Erase</span>
+            </button>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('phase')" id="btn-phase">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 13-3 3-3-3"/><path d="m15 7-3 3-3-3"/></svg>
+                <span class="text-[8px] font-bold uppercase">Phase</span>
+            </button>
+            <div class="w-px h-8 bg-slate-300 dark:bg-slate-600 mx-0.5 my-auto"></div>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('circle')" id="btn-circle">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+                <span class="text-[8px] font-bold uppercase">Circle</span>
+            </button>
+            <button class="tool-btn p-1.5 rounded-lg flex flex-col items-center gap-0.5 text-slate-500" onclick="setTool('polygon')" id="btn-polygon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l4 7h7l-6 4 2 7-7-4-7 4 2-7-6-4h7z"/></svg>
+                <span class="text-[8px] font-bold uppercase">Poly</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity">
+        <div class="bg-white dark:bg-slate-800 p-5 rounded-xl shadow-2xl w-full max-w-xs scale-95 transition-transform text-slate-700 dark:text-white border border-slate-200 dark:border-slate-700">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Settings</h2>
+                <button onclick="toggleSettings()" class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="space-y-5">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-sm">Dark Mode</span>
+                    <button id="theme-toggle" class="w-10 h-6 bg-slate-200 dark:bg-slate-600 rounded-full relative transition-colors" onclick="toggleTheme()">
+                        <div class="w-4 h-4 bg-white rounded-full absolute top-1 left-1 shadow-md transition-transform"></div>
+                    </button>
+                </div>
+                <button onclick="clearWorld()" class="w-full py-2 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 text-red-600 font-bold rounded-lg text-sm">Clear Board</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const state = {
+            tool: 'pan',
+            physicsMode: 'static',
+            color: '#3b82f6',
+            radius: 1,
+            camera: { x: 0, y: 0, zoom: 1 },
+            isDarkMode: false,
+            sensitivity: 1,
+            activePolygon: [],
+            isDragging: false,
+            dragStart: { x: 0, y: 0 },
+            dragCamStart: { x: 0, y: 0 },
+            grabConstraint: null,
+            grabbedBodyOriginalStatic: false,
+            morph: { body: null, vertexIndex: -1 },
+            debugBody: null,
+            tick: 0
+        };
+
+        const GRID_SIZE = 50;
+        const BOUNDARY_UNITS = 64;
+        const BOUNDARY_HALF = (BOUNDARY_UNITS * GRID_SIZE) / 2;
+        
+        const { Engine, Composite, Runner, Bodies, Vector, Constraint, Body, Vertices, Common } = Matter;
+
+        const engine = Engine.create();
+        const world = engine.world;
+        const runner = Runner.create();
+        
+        function createBoundaries() {
+            const wallThickness = 1000;
+            const options = { isStatic: true, render: { visible: false }, label: 'Boundary' };
+            Composite.add(world, [
+                Bodies.rectangle(0, -BOUNDARY_HALF - wallThickness/2, BOUNDARY_HALF*2 + wallThickness*2, wallThickness, options),
+                Bodies.rectangle(0, BOUNDARY_HALF + wallThickness/2, BOUNDARY_HALF*2 + wallThickness*2, wallThickness, options),
+                Bodies.rectangle(-BOUNDARY_HALF - wallThickness/2, 0, wallThickness, BOUNDARY_HALF*2, options),
+                Bodies.rectangle(BOUNDARY_HALF + wallThickness/2, 0, wallThickness, BOUNDARY_HALF*2, options)
+            ]);
+        }
+        createBoundaries();
+
+        const canvas = document.getElementById('world');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        Runner.run(runner, engine);
+
+        function render() {
+            state.tick++;
+            window.requestAnimationFrame(render);
+            ctx.fillStyle = state.isDarkMode ? '#1e293b' : '#f8fafc';
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.save();
+            ctx.translate(width / 2, height / 2);
+            ctx.scale(state.camera.zoom, state.camera.zoom);
+            ctx.translate(-state.camera.x, -state.camera.y);
+
+            drawGridAndBoundary();
+
+            const bodies = Composite.allBodies(world);
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            for (const body of bodies) {
+                if (body.render.visible === false) continue;
+                
+                // Rainbow Debug Logic
+                if (body.debugRainbow) {
+                    const hue = (state.tick + (body.id * 10)) % 360;
+                    body.customColor = `hsl(${hue}, 70%, 60%)`;
+                }
+
+                ctx.beginPath();
+                const vertices = body.vertices;
+                ctx.moveTo(vertices[0].x, vertices[0].y);
+                for (let j = 1; j < vertices.length; j += 1) ctx.lineTo(vertices[j].x, vertices[j].y);
+                ctx.lineTo(vertices[0].x, vertices[0].y);
+
+                ctx.fillStyle = body.customColor || '#64748b';
+                const originalAlpha = ctx.globalAlpha;
+                ctx.globalAlpha = 0.25;
+                ctx.fill();
+                ctx.globalAlpha = originalAlpha;
+
+                ctx.lineWidth = 2 / state.camera.zoom;
+                ctx.setLineDash(body.isStatic && !body.isTempDynamic ? [5, 5] : []);
+                ctx.strokeStyle = body.customColor || '#475569';
+                
+                // Glow if debugging
+                if (state.debugBody === body) {
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#22c55e';
+                    ctx.lineWidth = 4 / state.camera.zoom;
+                }
+                
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                if (state.tool === 'morph' && body.label !== 'Boundary') {
+                    ctx.fillStyle = body.customColor;
+                    for(let i=0; i<vertices.length; i++) {
+                        ctx.beginPath();
+                        ctx.arc(vertices[i].x, vertices[i].y, 3 / state.camera.zoom, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            if (state.tool === 'polygon' && state.activePolygon.length > 0) {
+                const worldMouse = getMouseWorldPos(lastMousePos);
+                ctx.beginPath();
+                ctx.moveTo(state.activePolygon[0].x, state.activePolygon[0].y);
+                for (let i = 1; i < state.activePolygon.length; i++) ctx.lineTo(state.activePolygon[i].x, state.activePolygon[i].y);
+                ctx.lineTo(worldMouse.x, worldMouse.y);
+                ctx.strokeStyle = state.color;
+                ctx.lineWidth = 2 / state.camera.zoom;
+                ctx.setLineDash([4, 4]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                for (const p of state.activePolygon) {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 3 / state.camera.zoom, 0, Math.PI * 2);
+                    ctx.fillStyle = state.color;
+                    ctx.fill();
+                }
+            }
+            
+            if (state.grabConstraint) {
+                const b = state.grabConstraint.bodyB;
+                const worldMouse = getMouseWorldPos(lastMousePos);
+                ctx.beginPath();
+                ctx.moveTo(b.position.x, b.position.y);
+                ctx.lineTo(worldMouse.x, worldMouse.y);
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 2 / state.camera.zoom;
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+        requestAnimationFrame(render);
+
+        function drawGridAndBoundary() {
+            const zoom = state.camera.zoom;
+            const left = state.camera.x - (width / 2) / zoom;
+            const right = state.camera.x + (width / 2) / zoom;
+            const top = state.camera.y - (height / 2) / zoom;
+            const bottom = state.camera.y + (height / 2) / zoom;
+
+            ctx.beginPath();
+            ctx.strokeStyle = state.isDarkMode ? '#334155' : '#e2e8f0';
+            ctx.lineWidth = 1 / zoom;
+            const startX = Math.floor(left / GRID_SIZE) * GRID_SIZE;
+            const startY = Math.floor(top / GRID_SIZE) * GRID_SIZE;
+            for (let x = startX; x < right; x += GRID_SIZE) { ctx.moveTo(x, top); ctx.lineTo(x, bottom); }
+            for (let y = startY; y < bottom; y += GRID_SIZE) { ctx.moveTo(left, y); ctx.lineTo(right, y); }
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.strokeStyle = state.isDarkMode ? '#475569' : '#cbd5e1';
+            ctx.lineWidth = 3 / zoom;
+            ctx.setLineDash([10, 10]);
+            ctx.strokeRect(-BOUNDARY_HALF, -BOUNDARY_HALF, BOUNDARY_HALF*2, BOUNDARY_HALF*2);
+            ctx.setLineDash([]);
+        }
+
+        let lastMousePos = { x: 0, y: 0 };
+        function getMouseWorldPos(screenPos) {
+            return {
+                x: (screenPos.x - width / 2) / state.camera.zoom + state.camera.x,
+                y: (screenPos.y - height / 2) / state.camera.zoom + state.camera.y
+            };
+        }
+
+        canvas.addEventListener('pointerdown', (e) => {
+            state.isDragging = true;
+            state.dragStart = { x: e.clientX, y: e.clientY };
+            lastMousePos = { x: e.clientX, y: e.clientY };
+            const worldPos = getMouseWorldPos(lastMousePos);
+
+            const bodies = Composite.allBodies(world).filter(b => b.label !== 'Boundary');
+            const clickedShape = Matter.Query.point(bodies, worldPos)[0];
+
+            if (state.tool === 'debug') {
+                if (clickedShape) openDebug(clickedShape, e);
+                else closeDebug();
+                return;
+            }
+
+            if (state.tool === 'paint') {
+                if (clickedShape) {
+                    clickedShape.customColor = state.color;
+                    clickedShape.debugRainbow = false; // Disable rainbow if painted manually
+                }
+                return;
+            }
+
+            if (state.tool === 'pan') {
+                state.dragCamStart = { ...state.camera };
+                canvas.style.cursor = 'grabbing';
+            } else if (state.tool === 'morph') {
+                let foundBody = null, foundVertex = -1;
+                for (const b of bodies) {
+                    for (let i = 0; i < b.vertices.length; i++) {
+                        if (Vector.magnitude(Vector.sub(worldPos, b.vertices[i])) < 15 / state.camera.zoom) {
+                            foundBody = b; foundVertex = i; break;
+                        }
+                    }
+                    if (foundBody) break;
+                }
+                if (foundBody) { state.morph.body = foundBody; state.morph.vertexIndex = foundVertex; }
+            } else if (state.tool === 'info' || state.tool === 'eraser' || state.tool === 'phase') {
+                if (clickedShape) {
+                    if (state.tool === 'eraser') Composite.remove(world, clickedShape);
+                    else if (state.tool === 'phase') Body.setStatic(clickedShape, !clickedShape.isStatic);
+                    else showInfo(clickedShape, e);
+                }
+            } else if (state.tool === 'grab') {
+                if (clickedShape) {
+                    state.grabbedBodyOriginalStatic = clickedShape.isStatic;
+                    clickedShape.isTempDynamic = true;
+                    Body.setStatic(clickedShape, false);
+                    state.grabConstraint = Constraint.create({
+                        pointA: worldPos, bodyB: clickedShape, stiffness: 0.1, damping: 0.05, length: 0
+                    });
+                    Composite.add(world, state.grabConstraint);
+                }
+            } else if (state.tool === 'circle') {
+                const r = state.radius * GRID_SIZE;
+                Composite.add(world, Bodies.circle(worldPos.x, worldPos.y, r, {
+                    isStatic: state.physicsMode === 'static', restitution: 0.5, friction: 0.5,
+                    customColor: state.color, label: 'Circle'
+                }));
+            } else if (state.tool === 'polygon') {
+                if (state.activePolygon.length > 2) {
+                    if (Vector.magnitude(Vector.sub(worldPos, state.activePolygon[0])) < 20 / state.camera.zoom) {
+                        finishPolygon(); return;
+                    }
+                }
+                state.activePolygon.push(worldPos);
+            }
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            lastMousePos = { x: e.clientX, y: e.clientY };
+            const worldPos = getMouseWorldPos(lastMousePos);
+
+            if (state.isDragging) {
+                if (state.tool === 'pan') {
+                    const dx = e.clientX - state.dragStart.x;
+                    const dy = e.clientY - state.dragStart.y;
+                    state.camera.x = state.dragCamStart.x - dx / state.camera.zoom * state.sensitivity;
+                    state.camera.y = state.dragCamStart.y - dy / state.camera.zoom * state.sensitivity;
+                } else if (state.tool === 'morph' && state.morph.body) {
+                    const b = state.morph.body;
+                    if (b.label === 'Circle') {
+                        const dist = Vector.magnitude(Vector.sub(worldPos, b.position));
+                        const scale = dist / (b.circleRadius || 1);
+                        Body.scale(b, scale, scale);
+                    } else {
+                        const v = b.vertices.map(pt => ({ x: pt.x, y: pt.y }));
+                        v[state.morph.vertexIndex] = worldPos;
+                        if (Vertices.area(v) > 100) Body.setVertices(b, v);
+                    }
+                }
+            }
+            if (state.grabConstraint) state.grabConstraint.pointA = worldPos;
+        });
+
+        window.addEventListener('pointerup', () => {
+            state.isDragging = false;
+            state.morph.body = null;
+            canvas.style.cursor = 'crosshair';
+            if (state.grabConstraint) {
+                const b = state.grabConstraint.bodyB;
+                Composite.remove(world, state.grabConstraint);
+                state.grabConstraint = null;
+                if (state.grabbedBodyOriginalStatic) {
+                    Body.setStatic(b, true);
+                    Body.setVelocity(b, { x: 0, y: 0 });
+                    b.isTempDynamic = false;
+                }
+            }
+        });
+
+        function showInfo(found, e) {
+            const card = document.getElementById('info-card');
+            document.getElementById('info-name').innerText = found.label || 'Shape';
+            document.getElementById('info-state').innerText = found.isStatic ? 'Static' : 'Dynamic';
+            document.getElementById('info-area').innerText = Math.round(found.area / 100) + ' u²';
+            document.getElementById('info-pos').innerText = `${Math.round(found.position.x/GRID_SIZE)},${Math.round(found.position.y/GRID_SIZE)}`;
+            card.style.display = 'block';
+            card.style.left = Math.min(e.clientX + 10, width - 180) + 'px';
+            card.style.top = Math.min(e.clientY + 10, height - 120) + 'px';
+        }
+
+        function finishPolygon() {
+            if (state.activePolygon.length < 3) return;
+            const centroid = Vertices.centre(state.activePolygon);
+            // Disable convexity check for "boomerang" support
+            const body = Bodies.fromVertices(centroid.x, centroid.y, [state.activePolygon], {
+                isStatic: state.physicsMode === 'static', restitution: 0.5, friction: 0.5,
+                customColor: state.color, label: 'Polygon'
+            }, true);
+            if (body) Composite.add(world, body);
+            state.activePolygon = [];
+        }
+
+        function setTool(t) {
+            state.tool = t;
+            state.activePolygon = [];
+            document.getElementById('info-card').style.display = 'none';
+            document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+            const btn = document.getElementById(`btn-${t}`);
+            if (btn) btn.classList.add('active');
+            
+            const cfg = document.getElementById('tool-config');
+            if (['pan', 'grab', 'info', 'eraser', 'phase', 'morph', 'paint', 'debug'].includes(t)) {
+                cfg.style.opacity = '0';
+                setTimeout(() => { cfg.style.display = 'none'; }, 150);
+            } else {
+                cfg.style.display = 'block';
+                cfg.offsetHeight;
+                cfg.style.opacity = '1';
+                cfg.style.transform = 'translateX(0)';
+                document.getElementById('config-title').innerText = t.charAt(0).toUpperCase() + t.slice(1);
+                document.getElementById('size-control').style.display = t === 'circle' ? 'flex' : 'none';
+            }
+            if (t !== 'debug') closeDebug();
+        }
+
+        function openDebug(body, e) {
+            state.debugBody = body;
+            const p = document.getElementById('debug-panel');
+            p.style.display = 'block';
+            p.style.left = Math.min(e.clientX + 10, width - 200) + 'px';
+            p.style.top = Math.min(e.clientY + 10, height - 250) + 'px';
+            
+            // Sync UI
+            document.getElementById('debug-rainbow').checked = body.debugRainbow || false;
+            document.getElementById('debug-grav').value = body.gravityScale ?? 1;
+            document.getElementById('debug-fric').value = body.friction ?? 0.5;
+        }
+
+        function updateDebugProp(prop, val) {
+            if (!state.debugBody) return;
+            if (prop === 'rainbow') state.debugBody.debugRainbow = val;
+            else if (prop === 'gravityScale') state.debugBody.gravityScale = parseFloat(val);
+            else if (prop === 'friction') state.debugBody.friction = parseFloat(val);
+        }
+
+        function applyToAllDebug() {
+            const bodies = Composite.allBodies(world).filter(b => b.label !== 'Boundary');
+            const rainbow = document.getElementById('debug-rainbow').checked;
+            const grav = parseFloat(document.getElementById('debug-grav').value);
+            const fric = parseFloat(document.getElementById('debug-fric').value);
+            bodies.forEach(b => {
+                b.debugRainbow = rainbow;
+                b.gravityScale = grav;
+                b.friction = fric;
+            });
+        }
+
+        function closeDebug() { 
+            state.debugBody = null; 
+            document.getElementById('debug-panel').style.display = 'none'; 
+        }
+
+        function setPhysicsMode(m) {
+            state.physicsMode = m;
+            const s = document.getElementById('mode-static'), g = document.getElementById('mode-gravity');
+            const act = "text-slate-800 dark:text-white bg-white dark:bg-slate-600 shadow-sm border border-slate-200 dark:border-slate-500";
+            const inact = "text-slate-400 border border-transparent";
+            s.className = `px-2 py-1 rounded-md text-xs font-bold transition-all ${m === 'static' ? act : inact}`;
+            g.className = `px-2 py-1 rounded-md text-xs font-bold transition-all ${m === 'gravity' ? act : inact}`;
+        }
+
+        function toggleTheme() { state.isDarkMode = !state.isDarkMode; document.getElementById('app-body').classList.toggle('dark'); }
+        function updateColor(v) { state.color = v; }
+        function updateRadius(v) { state.radius = parseFloat(v); }
+        function toggleSettings() { const m = document.getElementById('settings-modal'); m.classList.toggle('opacity-0'); m.classList.toggle('pointer-events-none'); }
+        function clearWorld() { Composite.remove(world, Composite.allBodies(world).filter(b => b.label !== 'Boundary')); toggleSettings(); }
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            state.camera.zoom = Math.max(0.1, Math.min(5, state.camera.zoom - e.deltaY * 0.001));
+        }, { passive: false });
+
+        setTool('pan');
+        setPhysicsMode('static');
+        window.addEventListener('contextmenu', e => e.preventDefault());
+    </script>
+</body>
+</html>
